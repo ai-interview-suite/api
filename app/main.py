@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from app.config import settings
-from app.routers.interview import router as interview_router
+from app.routers import interview, auth
 
 app = FastAPI(
     title=settings.app_name,
@@ -8,7 +8,8 @@ app = FastAPI(
     version=settings.app_version,
 )
 
-app.include_router(interview_router)
+app.include_router(auth.router)
+app.include_router(interview.router)
 
 @app.get("/")
 def health_check():

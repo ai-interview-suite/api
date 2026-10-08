@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 from app.schemas.interview import (
     Difficulty,
@@ -30,6 +32,7 @@ def test_create_interview():
     question = create_test_question()
 
     interview_id = create_interview(
+        user_id=uuid4(),
         resume_text="Python developer with FastAPI experience.",
         job_description="Looking for a Python backend developer.",
         questions=[question],
@@ -46,6 +49,7 @@ def test_save_answer():
     question = create_test_question()
 
     interview_id = create_interview(
+        user_id=uuid4(),
         resume_text="Python developer.",
         job_description="Backend developer.",
         questions=[question],
@@ -70,6 +74,7 @@ def test_cannot_answer_unknown_question():
     question = create_test_question()
 
     interview_id = create_interview(
+        user_id=uuid4(),
         resume_text="Python developer.",
         job_description="Backend developer.",
         questions=[question],

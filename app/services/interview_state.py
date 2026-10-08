@@ -4,10 +4,12 @@ from app.schemas.interview import InterviewQuestion
 class InterviewSession:
     def __init__(
             self, 
+            user_id: UUID,
             resume_text: str,
             job_description: str,
             questions: list[InterviewQuestion]
         ):
+        self.user_id = user_id
         self.resume_text = resume_text
         self.job_description = job_description
         self.questions = questions
@@ -16,12 +18,18 @@ class InterviewSession:
 _interviews: dict[UUID, InterviewSession] = {}
 
 def create_interview(
+    user_id: UUID,
     resume_text: str,
     job_description: str,
     questions: list[InterviewQuestion]
 ) -> UUID:
     interview_id = uuid4()
-    session = InterviewSession(resume_text, job_description, questions)
+    session = InterviewSession(
+        user_id=user_id,
+        resume_text=resume_text,
+        job_description=job_description,
+        questions=questions
+    )
     _interviews[interview_id] = session
     return interview_id
 

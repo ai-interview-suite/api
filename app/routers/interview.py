@@ -1,14 +1,22 @@
 from uuid import UUID
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
+from app.dependencies import get_current_user
 from app.schemas.interview import InterviewAnswerRequest, InterviewStartResponse, InterviewResultResponse
 from app.services.ai_service import generate_interview_questions, evaluate_interview
 from app.services.exceptions import AIResponseValidationError, AIServiceUnavailableError
 from app.services.resume_parser import extract_text_from_pdf
-from app.services.interview_state import create_interview, save_answer, get_interview
+from app.services.interview_state import create_interview, save_answer
 from app.services.scoring import calculate_overall_score, build_question_results
 from app.services.result_service import get_recommendation, build_conclusion
+from app.services.user_state import User
+from app.services.interview_access import (
+    get_user_interview,
+    InterviewAccessDeniedError,
+    InterviewNotFoundError,
+)
+
 
 router = APIRouter(
     prefix="/interview",
@@ -22,6 +30,7 @@ router = APIRouter(
 async def start_interview(
     resume: UploadFile = File(...),
     job_description: str = Form(...),
+    current_user: User = Depends(get_current_user),
 ):
     if resume.content_type != "application/pdf":
         raise HTTPException(
@@ -44,6 +53,7 @@ async def start_interview(
         )
 
         interview_id = create_interview(
+            user_id = current_user.id,
             resume_text = resume_text,
             job_description = job_description,
             questions = questions.questions
@@ -67,20 +77,29 @@ async def start_interview(
 @router.post("/{interview_id}/answers")
 async def submit_answer(
     interview_id: UUID,
-    request: InterviewAnswerRequest
+    request: InterviewAnswerRequest,
+    current_user: User = Depends(get_current_user)
 ):
-    session = get_interview(interview_id)
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Interview not found"
-        )
-    
     try:
+        interview = get_user_interview(
+            interview_id=interview_id,
+            user_id=current_user.id,
+        )
+        
         save_answer(
             interview_id=interview_id,
             question_id=request.question_id,
             answer=request.answer,
+        )
+    except InterviewNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interview not found.",
+        )
+    except InterviewAccessDeniedError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this interview.",
         )
     except ValueError as e:
         raise HTTPException(
@@ -95,16 +114,28 @@ async def submit_answer(
     }
 
 @router.get("/{interview_id}")
-async def get_interview_status(interview_id: UUID):
-    session = get_interview(interview_id)
-    if not session:
+async def get_interview_status(
+    interview_id: UUID,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        interview = get_user_interview(
+            interview_id=interview_id,
+            user_id=current_user.id,
+        )
+    except InterviewNotFoundError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Interview not found.",
+            )
+    except InterviewAccessDeniedError:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Interview not found"
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this interview.",
         )
 
-    total_questions = len(session.questions)
-    answered_questions = len(session.answers)
+    total_questions = len(interview.questions)
+    answered_questions = len(interview.answers)
 
     return {
         "interview_id": interview_id,
@@ -116,13 +147,22 @@ async def get_interview_status(interview_id: UUID):
 @router.post("/{interview_id}/submit", response_model=InterviewResultResponse)
 async def submit_interview(
     interview_id: UUID,
+    current_user: User = Depends(get_current_user)
 ):
-    interview = get_interview(interview_id)
-
-    if interview is None:
+    try:
+        interview = get_user_interview(
+            interview_id=interview_id,
+            user_id=current_user.id,
+        )
+    except InterviewNotFoundError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Interview not found.",
+            )
+    except InterviewAccessDeniedError:
         raise HTTPException(
-            status_code=404,
-            detail="Interview not found.",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this interview.",
         )
 
     total_questions = len(interview.questions)

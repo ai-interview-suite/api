@@ -1,14 +1,9 @@
-import os
-
-from dotenv import load_dotenv
 from openai import OpenAI
-
-
-load_dotenv()
+from app.config import settings
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=os.environ["OPENROUTER_API_KEY"],
+    api_key=settings.openrouter_api_key,
 )
 
 
