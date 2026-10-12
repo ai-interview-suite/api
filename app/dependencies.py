@@ -8,20 +8,21 @@ from fastapi.security import (
 from jose import JWTError, jwt
 
 from app.config import settings
-from app.services.user_state import (
-    User,
-    get_user_by_id,
-)
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import get_db
+from app.models.user import UserModel
+from app.repositories.user_repository import get_user_by_id
 
 security = HTTPBearer()
 
 
-def get_current_user(
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(
         security
     ),
-) -> User:
+    db: AsyncSession = Depends(get_db),
+) -> UserModel:
 
     token = credentials.credentials
 
@@ -48,7 +49,10 @@ def get_current_user(
             detail="Invalid authentication token.",
         )
 
-    user = get_user_by_id(user_uuid)
+    user = await get_user_by_id(
+        db=db,
+        user_id=user_id,
+    )
 
     if user is None:
         raise HTTPException(

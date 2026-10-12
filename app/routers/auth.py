@@ -13,7 +13,10 @@ from app.services.password import (
     hash_password,
     verify_password,
 )
-from app.services.user_state import (
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database import get_db
+from app.repositories.user_repository import (
     create_user,
     get_user_by_email,
 )
@@ -41,13 +44,17 @@ async def get_me(
 @router.post(
     "/register",
     response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED
 )
 async def register(
     request: UserCreate,
+    db: AsyncSession = Depends(get_db),
 ):
 
-    existing_user = get_user_by_email(
-        request.email
+    email = str(request.email).strip().lower()
+    existing_user = await get_user_by_email(
+        db,
+        email,
     )
 
     if existing_user is not None:
@@ -60,10 +67,21 @@ async def register(
         request.password
     )
 
-    user = create_user(
-        email=request.email,
-        password_hash=password_hash,
-    )
+    try:
+        user = await create_user(
+            db=db,
+            email=email,
+            password_hash=password_hash,
+        )
+    except IntegrityError:
+        # A concurrent registration may have inserted
+        # this email after our initial lookup.
+        await db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email is already registered.",
+        )
 
     return UserResponse(
         id=user.id,
@@ -76,11 +94,10 @@ async def register(
 )
 async def login(
     request: UserLogin,
+    db: AsyncSession = Depends(get_db),
 ):
-
-    user = get_user_by_email(
-        request.email
-    )
+    email = str(request.email).strip().lower()
+    user = await get_user_by_email(db, email)
 
     if user is None:
         raise HTTPException(

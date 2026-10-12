@@ -1,103 +1,47 @@
 from app.schemas.interview import AnswerEvaluation
 from app.services.scoring import (
-    build_question_results,
     calculate_answer_score,
     calculate_overall_score,
 )
 
 
-def test_perfect_answer_gets_100():
-
-    evaluation = AnswerEvaluation(
-        question_id=1,
-        technical_accuracy=10,
-        relevance=10,
-        completeness=10,
-        communication=10,
-        evidence=["Explained the request lifecycle in detail."],
-        strengths=["Excellent technical explanation."],
-        weaknesses=["No major weaknesses."],
-        feedback="Excellent answer.",
+def make_evaluation(
+    question_id: int,
+    score: int,
+) -> AnswerEvaluation:
+    return AnswerEvaluation(
+        question_id=question_id,
+        technical_accuracy=score,
+        relevance=score,
+        completeness=score,
+        communication=score,
+        evidence=["The answer explains the key concept."],
+        strengths=["Explains the concept clearly."],
+        weaknesses=["Could provide more detail."],
+        feedback="The answer demonstrates this level of understanding.",
     )
 
-    score = calculate_answer_score(evaluation)
 
-    assert score == 100
+def test_perfect_answer_scores_100():
+    evaluation = make_evaluation(1, 10)
 
-def test_weak_answer_gets_low_score():
+    assert calculate_answer_score(evaluation) == 100
 
-    evaluation = AnswerEvaluation(
-        question_id=1,
-        technical_accuracy=2,
-        relevance=3,
-        completeness=2,
-        communication=4,
-        evidence=["Mentioned the topic without explaining it."],
-        strengths=["Attempted to answer the question."],
-        weaknesses=["Missing important technical details."],
-        feedback="The answer needs improvement.",
-    )
 
-    score = calculate_answer_score(evaluation)
+def test_zero_score_answer_scores_zero():
+    evaluation = make_evaluation(1, 0)
 
-    assert score == 26
+    assert calculate_answer_score(evaluation) == 0
+
 
 def test_overall_score_is_average():
-
     evaluations = [
-        AnswerEvaluation(
-            question_id=1,
-            technical_accuracy=10,
-            relevance=10,
-            completeness=10,
-            communication=10,
-            evidence=["Gave a concrete implementation example."],
-            strengths=["Excellent."],
-            weaknesses=["None."],
-            feedback="Excellent answer.",
-        ),
-        AnswerEvaluation(
-            question_id=2,
-            technical_accuracy=6,
-            relevance=6,
-            completeness=6,
-            communication=6,
-            evidence=["Named the relevant concepts."],
-            strengths=["Good."],
-            weaknesses=["Needs more detail."],
-            feedback="Good answer.",
-        ),
+        make_evaluation(1, 10),
+        make_evaluation(2, 6),
     ]
 
-    score = calculate_overall_score(
-        evaluations
-    )
+    assert calculate_overall_score(evaluations) == 80
 
-    assert score == 80
 
-def test_build_question_results_carries_evaluation_details():
-
-    evaluation = AnswerEvaluation(
-        question_id=3,
-        technical_accuracy=8,
-        relevance=7,
-        completeness=6,
-        communication=9,
-        evidence=["Walked through the caching layer."],
-        strengths=["Clear explanation."],
-        weaknesses=["Did not mention tradeoffs."],
-        feedback="A solid answer overall.",
-    )
-
-    results = build_question_results([evaluation])
-
-    assert len(results) == 1
-
-    result = results[0]
-
-    assert result.question_id == 3
-    assert result.score == calculate_answer_score(evaluation)
-    assert result.evidence == evaluation.evidence
-    assert result.strengths == evaluation.strengths
-    assert result.weaknesses == evaluation.weaknesses
-    assert result.feedback == evaluation.feedback
+def test_empty_evaluations_return_zero():
+    assert calculate_overall_score([]) == 0

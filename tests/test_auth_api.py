@@ -1,21 +1,31 @@
-from fastapi.testclient import TestClient
-
-from app.main import app
-
-
-client = TestClient(app)
-
-def test_register_user():
-
-    response = client.post(
+async def register(client, email, password="strong-password"):
+    return await client.post(
         "/auth/register",
         json={
-            "email": "newuser@example.com",
-            "password": "strong-password",
+            "email": email,
+            "password": password,
         },
     )
 
-    assert response.status_code == 200
+
+async def login(client, email, password="strong-password"):
+    return await client.post(
+        "/auth/login",
+        json={
+            "email": email,
+            "password": password,
+        },
+    )
+
+
+async def test_register_user(anonymous_client):
+
+    response = await register(
+        anonymous_client,
+        "newuser@example.com",
+    )
+
+    assert response.status_code == 201
 
     data = response.json()
 
@@ -24,50 +34,31 @@ def test_register_user():
     assert "password" not in data
     assert "password_hash" not in data
 
-def test_duplicate_email_is_rejected():
+
+async def test_duplicate_email_is_rejected(anonymous_client):
 
     email = "duplicate@example.com"
 
-    first_response = client.post(
-        "/auth/register",
-        json={
-            "email": email,
-            "password": "strong-password",
-        },
-    )
+    first_response = await register(anonymous_client, email)
 
-    assert first_response.status_code == 200
+    assert first_response.status_code == 201
 
-    second_response = client.post(
-        "/auth/register",
-        json={
-            "email": email,
-            "password": "another-password",
-        },
+    second_response = await register(
+        anonymous_client,
+        email,
+        "another-password",
     )
 
     assert second_response.status_code == 409
 
-def test_login_success():
+
+async def test_login_success(anonymous_client):
 
     email = "login@example.com"
-    password = "strong-password"
 
-    client.post(
-        "/auth/register",
-        json={
-            "email": email,
-            "password": password,
-        },
-    )
+    await register(anonymous_client, email)
 
-    response = client.post(
-        "/auth/login",
-        json={
-            "email": email,
-            "password": password,
-        },
-    )
+    response = await login(anonymous_client, email)
 
     assert response.status_code == 200
 
@@ -76,24 +67,28 @@ def test_login_success():
     assert "access_token" in data
     assert data["token_type"] == "bearer"
 
-def test_login_wrong_password():
+
+async def test_login_wrong_password(anonymous_client):
 
     email = "wrong-password@example.com"
 
-    client.post(
-        "/auth/register",
-        json={
-            "email": email,
-            "password": "correct-password",
-        },
+    await register(anonymous_client, email, "correct-password")
+
+    response = await login(anonymous_client, email, "wrong-password")
+
+    assert response.status_code == 401
+
+    assert response.json()["detail"] == (
+        "Invalid email or password."
     )
 
-    response = client.post(
-        "/auth/login",
-        json={
-            "email": email,
-            "password": "wrong-password",
-        },
+
+async def test_login_unknown_email(anonymous_client):
+
+    response = await login(
+        anonymous_client,
+        "does-not-exist@example.com",
+        "some-password",
     )
 
     assert response.status_code == 401
@@ -102,56 +97,25 @@ def test_login_wrong_password():
         "Invalid email or password."
     )
 
-def test_login_unknown_email():
 
-    response = client.post(
-        "/auth/login",
-        json={
-            "email": "does-not-exist@example.com",
-            "password": "some-password",
-        },
-    )
+async def test_me_requires_authentication(anonymous_client):
 
-    assert response.status_code == 401
-
-    assert response.json()["detail"] == (
-        "Invalid email or password."
-    )
-
-def test_me_requires_authentication():
-
-    response = client.get(
-        "/auth/me"
-    )
+    response = await anonymous_client.get("/auth/me")
 
     assert response.status_code in {401, 403}
 
-def test_me_with_valid_token():
+
+async def test_me_with_valid_token(anonymous_client):
 
     email = "me@example.com"
-    password = "strong-password"
 
-    client.post(
-        "/auth/register",
-        json={
-            "email": email,
-            "password": password,
-        },
-    )
+    await register(anonymous_client, email)
 
-    login_response = client.post(
-        "/auth/login",
-        json={
-            "email": email,
-            "password": password,
-        },
-    )
+    login_response = await login(anonymous_client, email)
 
-    token = login_response.json()[
-        "access_token"
-    ]
+    token = login_response.json()["access_token"]
 
-    response = client.get(
+    response = await anonymous_client.get(
         "/auth/me",
         headers={
             "Authorization": f"Bearer {token}"
@@ -161,9 +125,10 @@ def test_me_with_valid_token():
     assert response.status_code == 200
     assert response.json()["email"] == email
 
-def test_me_with_invalid_token():
 
-    response = client.get(
+async def test_me_with_invalid_token(anonymous_client):
+
+    response = await anonymous_client.get(
         "/auth/me",
         headers={
             "Authorization": "Bearer invalid-token"
