@@ -94,17 +94,13 @@ async def evaluate_interview(
 
     evaluation_schema = (InterviewEvaluationResponse.model_json_schema())
 
-    question_data = []
-
-    for question in questions:
-        question_data.append(
-            {
-                "question_id": question.id,
-                "question": question.question,
-                "expected_topics": question.expected_topics,
-                "answer": answers.get(question.id, "")
-            }
-        )
+    question_data = [
+        {
+            **question.model_dump(mode="json"),
+            "answer": answers.get(question.id, ""),
+        }
+        for question in questions
+    ]
 
     try:
         response = await client.chat.completions.create(
