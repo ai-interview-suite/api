@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 .coverage
 notes.txt
+.env.production.local
