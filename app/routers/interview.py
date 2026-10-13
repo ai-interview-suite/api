@@ -8,12 +8,18 @@ from app.database import get_db
 from app.repositories.interview_repository import (
     create_interview,
     get_user_interview,
+    get_user_interviews,
     save_interview_answer
 )
 from app.dependencies import get_current_user
 from app.models.user import UserModel
 from app.models.interview import InterviewStatus
-from app.schemas.interview import InterviewAnswerRequest, InterviewStartResponse, InterviewResultResponse
+from app.schemas.interview import (
+    InterviewAnswerRequest,
+    InterviewStartResponse,
+    InterviewResultResponse,
+    InterviewSummary,
+)
 from app.services.ai_service import generate_interview_questions
 from app.services.exceptions import AIResponseValidationError, AIServiceUnavailableError
 from app.services.resume_parser import extract_text_from_pdf
@@ -24,6 +30,33 @@ router = APIRouter(
     prefix="/interview",
     tags=["interview"]
 )
+
+@router.get(
+    "/",
+    response_model=list[InterviewSummary],
+)
+async def list_interviews(
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    interviews = await get_user_interviews(
+        db=db,
+        user_id=current_user.id,
+    )
+
+    return [
+        InterviewSummary(
+            interview_id=interview.id,
+            job_description=interview.job_description,
+            status=interview.status.value,
+            total_questions=len(interview.questions),
+            answered_questions=len(interview.answers),
+            overall_score=interview.overall_score,
+            recommendation=interview.recommendation,
+            created_at=interview.created_at,
+        )
+        for interview in interviews
+    ]
 
 @router.post(
     "/start",

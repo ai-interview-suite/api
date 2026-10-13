@@ -60,6 +60,25 @@ async def get_user_interview(
     return result.scalar_one_or_none()
 
 
+async def get_user_interviews(
+    db: AsyncSession,
+    user_id: UUID,
+) -> list[InterviewModel]:
+
+    result = await db.execute(
+        select(InterviewModel)
+        .where(
+            InterviewModel.user_id == user_id,
+        )
+        .options(
+            selectinload(InterviewModel.answers)
+        )
+        .order_by(InterviewModel.created_at.desc())
+    )
+
+    return list(result.scalars().all())
+
+
 async def save_interview_answer(
     db: AsyncSession,
     interview: InterviewModel,
