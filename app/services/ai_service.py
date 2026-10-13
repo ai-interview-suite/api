@@ -7,7 +7,7 @@ from app.schemas.interview import InterviewQuestionsResponse, InterviewQuestion,
 from app.services.exceptions import AIResponseValidationError, AIServiceUnavailableError
 
 client = AsyncOpenAI(
-    base_url="https://openrouter.ai/api/v1",
+    base_url=settings.openrouter_base_url,
     api_key=settings.openrouter_api_key,
     timeout=30,
 )
@@ -22,7 +22,7 @@ async def generate_interview_questions(
 ) -> InterviewQuestionsResponse:
     try:
         response = await client.chat.completions.create(
-            model="nvidia/nemotron-3-super-120b-a12b:free",
+            model=settings.ai_model,
             extra_body={"provider": {"require_parameters": True}},
             messages=[
                 {
@@ -104,7 +104,7 @@ async def evaluate_interview(
 
     try:
         response = await client.chat.completions.create(
-            model="nvidia/nemotron-3-super-120b-a12b:free",
+            model=settings.ai_model,
             extra_body={"provider": {"require_parameters": True}},
             messages=[
                 {

@@ -47,6 +47,8 @@ cp .env.example .env
 | Variable | Required | Default |
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | yes | — |
+| `OPENROUTER_BASE_URL` | no | `https://openrouter.ai/api/v1` |
+| `AI_MODEL` | no | `nvidia/nemotron-3-super-120b-a12b:free` |
 | `APP_NAME` | no | `AI Interview Service` |
 | `APP_VERSION` | no | `1.0.0` |
 | `DEBUG` | no | `true` |
