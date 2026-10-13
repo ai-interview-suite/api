@@ -2,15 +2,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.interview import (
-    InterviewAnswerModel,
-    InterviewModel,
-    InterviewStatus,
-)
+from app.models.interview import InterviewStatus
 from app.repositories.interview_repository import get_user_interview
 from app.schemas.interview import (
     InterviewQuestion,
-    InterviewRecommendation,
     InterviewResultResponse,
 )
 from app.services.ai_service import evaluate_interview

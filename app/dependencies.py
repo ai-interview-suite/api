@@ -51,7 +51,7 @@ async def get_current_user(
 
     user = await get_user_by_id(
         db=db,
-        user_id=user_id,
+        user_id=user_uuid,
     )
 
     if user is None:

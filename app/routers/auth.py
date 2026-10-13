@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 
 from app.dependencies import get_current_user
-from app.services.user_state import User
+from app.models.user import UserModel
 from app.schemas.auth import (
     TokenResponse,
     UserCreate,
@@ -32,7 +32,7 @@ router = APIRouter(
     response_model=UserResponse,
 )
 async def get_me(
-    current_user: User = Depends(
+    current_user: UserModel = Depends(
         get_current_user
     ),
 ):

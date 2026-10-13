@@ -14,10 +14,9 @@ from app.dependencies import get_current_user
 from app.models.user import UserModel
 from app.models.interview import InterviewStatus
 from app.schemas.interview import InterviewAnswerRequest, InterviewStartResponse, InterviewResultResponse
-from app.services.ai_service import generate_interview_questions, evaluate_interview
+from app.services.ai_service import generate_interview_questions
 from app.services.exceptions import AIResponseValidationError, AIServiceUnavailableError
 from app.services.resume_parser import extract_text_from_pdf
-from app.services.user_state import User
 from app.services.interview_completion import complete_interview
 
 
@@ -84,7 +83,7 @@ async def start_interview(
 async def submit_answer(
     interview_id: UUID,
     request: InterviewAnswerRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     interview = await get_user_interview(
@@ -121,7 +120,7 @@ async def submit_answer(
 @router.get("/{interview_id}")
 async def get_interview_status(
     interview_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     interview = await get_user_interview(
@@ -152,7 +151,7 @@ async def get_interview_status(
 )
 async def submit_interview(
     interview_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
