@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, Field
 from enum import Enum
 from uuid import UUID
@@ -36,6 +37,16 @@ class InterviewQuestionsResponse(BaseModel):
 class InterviewStartResponse(BaseModel):
     interview_id: UUID
     questions: list[InterviewQuestion]
+
+class InterviewSummary(BaseModel):
+    interview_id: UUID
+    job_description: str
+    status: str
+    total_questions: int
+    answered_questions: int
+    overall_score: int | None
+    recommendation: str | None
+    created_at: datetime
 
 class InterviewAnswerRequest(BaseModel):
     question_id: int = Field(ge=1)

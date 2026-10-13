@@ -8,6 +8,7 @@ from app.models.interview import (
     InterviewModel,
     InterviewStatus,
 )
+from app.models.user import UserModel
 from app.routers import interview as interview_router
 from app.schemas.interview import (
     Difficulty,
@@ -255,3 +256,67 @@ async def test_submit_answer_persists_to_database(
     assert saved_answer.answer == (
         "FastAPI uses Depends for dependency injection."
     )
+
+
+@pytest.mark.asyncio
+async def test_list_interviews_returns_only_current_user_interviews(
+    client,
+    test_session,
+    test_user_id,
+):
+    other_user = UserModel(
+        email="other-user@example.com",
+        password_hash="$2b$12$test-placeholder",
+    )
+    test_session.add(other_user)
+    await test_session.commit()
+    await test_session.refresh(other_user)
+
+    question = {
+        "id": 1,
+        "question": "Explain dependency injection in FastAPI.",
+        "category": "technical",
+        "difficulty": "medium",
+        "expected_topics": ["Depends"],
+    }
+
+    own_interview = InterviewModel(
+        user_id=test_user_id,
+        resume_text="Python developer.",
+        job_description="Python backend developer.",
+        questions=[question],
+        status=InterviewStatus.IN_PROGRESS,
+    )
+    other_interview = InterviewModel(
+        user_id=other_user.id,
+        resume_text="Java developer.",
+        job_description="Java backend developer.",
+        questions=[question],
+        status=InterviewStatus.IN_PROGRESS,
+    )
+
+    test_session.add_all([own_interview, other_interview])
+    await test_session.commit()
+    await test_session.refresh(own_interview)
+
+    test_session.add(
+        InterviewAnswerModel(
+            interview_id=own_interview.id,
+            question_id=1,
+            answer="FastAPI uses Depends.",
+        )
+    )
+    await test_session.commit()
+
+    response = await client.get("/interview")
+
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert len(body) == 1
+    assert body[0]["interview_id"] == str(own_interview.id)
+    assert body[0]["status"] == "in_progress"
+    assert body[0]["total_questions"] == 1
+    assert body[0]["answered_questions"] == 1
+    assert body[0]["overall_score"] is None
