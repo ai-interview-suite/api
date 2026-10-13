@@ -308,7 +308,7 @@ async def test_list_interviews_returns_only_current_user_interviews(
     )
     await test_session.commit()
 
-    response = await client.get("/interview")
+    response = await client.get("/interview/")
 
     assert response.status_code == 200
 
