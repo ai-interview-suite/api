@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     debug: bool = True
 
     openrouter_api_key: str
+    openrouter_base_url: str
+    ai_model: str
 
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
