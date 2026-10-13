@@ -16,9 +16,16 @@ class Settings(BaseSettings):
 
     database_url: str
 
+    # Comma-separated list of origins allowed to call the API from a browser
+    cors_origins: str
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",
     )
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 settings = Settings()
