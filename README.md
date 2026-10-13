@@ -9,6 +9,14 @@ PostgreSQL and scoped to the user who created them.
 
 Question generation and answer evaluation run through [OpenRouter](https://openrouter.ai).
 
+## Live
+
+| | URL |
+| --- | --- |
+| API | https://ai-interview-suite-api.onrender.com |
+| API docs | https://ai-interview-suite-api.onrender.com/docs |
+| Frontend | https://ai-interview-suite-front.vercel.app |
+
 ## How it works
 
 1. **Start** — the resume PDF is parsed to text and sent with the job description
@@ -66,6 +74,7 @@ sudo -u postgres psql -c "CREATE DATABASE interview_db OWNER <db_user>;"
 | `OPENROUTER_BASE_URL` | yes | — (e.g. `https://openrouter.ai/api/v1`) |
 | `AI_MODEL` | yes | — (e.g. `nvidia/nemotron-3-super-120b-a12b:free`) |
 | `JWT_SECRET_KEY` | yes | — |
+| `CORS_ORIGINS` | yes | — (comma-separated, e.g. `http://localhost:3000,https://ai-interview-suite-front.vercel.app`) |
 | `JWT_ALGORITHM` | no | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | no | `30` |
 | `APP_NAME` | no | `AI Interview Service` |
@@ -80,6 +89,19 @@ alembic upgrade head
 
 To confirm your OpenRouter key and model work, run `python check_openrouter.py`.
 
+### Hosted PostgreSQL (Neon)
+
+To use a [Neon](https://neon.tech) database, set `DATABASE_URL` to its connection
+string with the `postgresql+asyncpg://` scheme. asyncpg does not accept Neon's
+`sslmode` and `channel_binding` query parameters; replace them with `ssl=require`:
+
+```
+DATABASE_URL=postgresql+asyncpg://<user>:<password>@<host>.neon.tech/<db>?ssl=require
+```
+
+Run `python check_neon.py` and paste the Neon URL (input is hidden) to list the
+tables and Alembic revision in that database, e.g. to confirm migrations ran.
+
 ## Running
 
 ```bash
@@ -88,8 +110,43 @@ uvicorn app.main:app --reload
 
 Interactive API docs are then at `http://127.0.0.1:8000/docs`.
 
-CORS allows only `http://localhost:3000` (the [front](https://github.com/ai-interview-suite/front)
-dev server); change `allow_origins` in `app/main.py` to serve another origin.
+Browser requests are only accepted from the origins listed in `CORS_ORIGINS`.
+Add the URL of every [front](https://github.com/ai-interview-suite/front)
+deployment there (the local dev server is `http://localhost:3000`).
+
+## Deployment
+
+| Part | Host | Notes |
+| --- | --- | --- |
+| API | [Render](https://render.com) web service | Python, deployed from this repo |
+| Database | [Neon](https://neon.tech) serverless PostgreSQL | AWS `ap-southeast-1` (Singapore) |
+| Frontend | [Vercel](https://vercel.com) | Deployed from the [front](https://github.com/ai-interview-suite/front) repo |
+
+Render service settings:
+
+- **Source:** `ai-interview-suite/api`, branch `main`, repository root
+- **Build command:** `pip install -r requirements.txt`
+- **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port "$PORT"`
+- **Auto-deploy:** on every commit to `main`
+- **Environment:** every variable from the [Setup](#setup) table. `DATABASE_URL`
+  is the Neon connection string in the asyncpg form shown under
+  [Hosted PostgreSQL (Neon)](#hosted-postgresql-neon), and `CORS_ORIGINS` must
+  include `https://ai-interview-suite-front.vercel.app`.
+
+Migrations are **not** run by Render. Before merging a change that adds an
+Alembic revision, apply it to Neon from your machine:
+
+```bash
+DATABASE_URL='postgresql+asyncpg://<user>:<password>@<host>.neon.tech/<db>?ssl=require' \
+  alembic upgrade head
+python check_neon.py   # confirm the new revision is listed
+```
+
+The Neon project and its connection string are managed in the
+[Neon console](https://console.neon.tech).
+
+The service is on Render's free plan, so it sleeps when idle and the first
+request after a quiet period can take up to a minute.
 
 ## API
 
@@ -133,7 +190,7 @@ curl -X POST http://127.0.0.1:8000/interview/start \
 ## Tests
 
 The tests run against a separate PostgreSQL database configured in `.env.test`,
-which overrides `DATABASE_URL` from `.env`. Its name must contain `test`; tables
+which overrides `DATABASE_URL` and `CORS_ORIGINS` from `.env`. Its name must contain `test`; tables
 are created and dropped around each test, so never point it at real data.
 
 ```bash
@@ -168,6 +225,7 @@ app/
     exceptions.py            AI service error types
 migrations/                  Alembic migrations
 check_openrouter.py          Manual OpenRouter connectivity check
+check_neon.py                Manual Neon database check (tables, Alembic revision)
 tests/                       Pytest suite
 ```
 
