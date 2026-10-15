@@ -15,7 +15,7 @@ Question generation and answer evaluation run through [OpenRouter](https://openr
 | --- | --- |
 | API | https://ai-interview-suite-api.onrender.com |
 | API docs | https://ai-interview-suite-api.onrender.com/docs |
-| Frontend | https://ai-interview-suite-front.vercel.app |
+| Frontend | https://aiinterviewsuite.vercel.app |
 
 ## How it works
 
@@ -74,7 +74,7 @@ sudo -u postgres psql -c "CREATE DATABASE interview_db OWNER <db_user>;"
 | `OPENROUTER_BASE_URL` | yes | — (e.g. `https://openrouter.ai/api/v1`) |
 | `AI_MODEL` | yes | — (e.g. `nvidia/nemotron-3-super-120b-a12b:free`) |
 | `JWT_SECRET_KEY` | yes | — |
-| `CORS_ORIGINS` | yes | — (comma-separated, e.g. `http://localhost:3000,https://ai-interview-suite-front.vercel.app`) |
+| `CORS_ORIGINS` | yes | — (comma-separated, e.g. `http://localhost:3000,https://aiinterviewsuite.vercel.app`) |
 | `JWT_ALGORITHM` | no | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | no | `30` |
 | `APP_NAME` | no | `AI Interview Service` |
@@ -131,7 +131,7 @@ Render service settings:
 - **Environment:** every variable from the [Setup](#setup) table. `DATABASE_URL`
   is the Neon connection string in the asyncpg form shown under
   [Hosted PostgreSQL (Neon)](#hosted-postgresql-neon), and `CORS_ORIGINS` must
-  include `https://ai-interview-suite-front.vercel.app`.
+  include `https://aiinterviewsuite.vercel.app`.
 
 Migrations are **not** run by Render. Before merging a change that adds an
 Alembic revision, apply it to Neon from your machine:
