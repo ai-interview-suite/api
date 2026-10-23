@@ -26,7 +26,7 @@ async def get_user_by_id(
 
     result = await db.execute(
         select(UserModel).where(
-            UserModel.id == user_id
+            UserModel.user_id == user_id
         )
     )
 

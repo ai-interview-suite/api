@@ -102,7 +102,7 @@ async def test_user_id(test_db) -> UUID:
         await session.commit()
         await session.refresh(user)
 
-        return user.id
+        return user.user_id
 
 
 async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -137,7 +137,7 @@ async def client(
 
     async def override_get_current_user():
         return SimpleNamespace(
-            id=test_user_id,
+            user_id=test_user_id,
             email="test-user@example.com",
         )
 

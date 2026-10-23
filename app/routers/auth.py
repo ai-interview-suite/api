@@ -37,7 +37,7 @@ async def get_me(
     ),
 ):
     return UserResponse(
-        id=current_user.id,
+        id=current_user.user_id,
         email=current_user.email,
     )
 
@@ -84,7 +84,7 @@ async def register(
         )
 
     return UserResponse(
-        id=user.id,
+        id=user.user_id,
         email=user.email,
     )
 
@@ -123,7 +123,7 @@ async def login(
         )
 
     access_token = create_access_token(
-        user.id
+        user.user_id
     )
 
     return TokenResponse(
