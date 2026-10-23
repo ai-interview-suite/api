@@ -7,13 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.repositories.interview_repository import (
     create_interview,
-    get_user_interview,
-    get_user_interviews,
-    save_interview_answer
+    get_latest_attempt,
+    get_user_interview_summaries,
+    save_answer,
 )
 from app.dependencies import get_current_user
 from app.models.user import UserModel
-from app.models.interview import InterviewStatus
+from app.models.interview_attempt import InterviewStatus
 from app.schemas.interview import (
     InterviewAnswerRequest,
     InterviewStartResponse,
@@ -24,6 +24,7 @@ from app.services.ai_service import generate_interview_questions
 from app.services.exceptions import AIResponseValidationError, AIServiceUnavailableError
 from app.services.resume_parser import extract_text_from_pdf
 from app.services.interview_completion import complete_interview
+from app.services.result_service import build_result_report
 
 
 router = APIRouter(
@@ -39,23 +40,27 @@ async def list_interviews(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    interviews = await get_user_interviews(
+    summaries = await get_user_interview_summaries(
         db=db,
         user_id=current_user.id,
     )
 
     return [
         InterviewSummary(
-            interview_id=interview.id,
-            job_description=interview.job_description,
-            status=interview.status.value,
-            total_questions=len(interview.questions),
-            answered_questions=len(interview.answers),
-            overall_score=interview.overall_score,
-            recommendation=interview.recommendation,
-            created_at=interview.created_at,
+            interview_id=summary.interview_id,
+            job_description=summary.job_description,
+            status=summary.status.value,
+            total_questions=summary.total_questions,
+            answered_questions=summary.answered_questions,
+            overall_score=summary.overall_score,
+            recommendation=(
+                summary.recommendation.value
+                if summary.recommendation is not None
+                else None
+            ),
+            created_at=summary.created_at,
         )
-        for interview in interviews
+        for summary in summaries
     ]
 
 @router.post(
@@ -119,22 +124,22 @@ async def submit_answer(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    interview = await get_user_interview(
+    attempt = await get_latest_attempt(
         db=db,
         interview_id=interview_id,
         user_id=current_user.id,
     )
 
-    if interview is None:
+    if attempt is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Interview not found.",
         )
 
     try:
-        await save_interview_answer(
+        await save_answer(
             db=db,
-            interview=interview,
+            attempt=attempt,
             question_id=request.question_id,
             answer=request.answer,
         )
@@ -146,7 +151,7 @@ async def submit_answer(
 
     return {
         "message": "Answer saved successfully.",
-        "interview_id": interview.id,
+        "interview_id": interview_id,
         "question_id": request.question_id
     }
 
@@ -156,26 +161,29 @@ async def get_interview_status(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    interview = await get_user_interview(
+    attempt = await get_latest_attempt(
         db=db,
         interview_id=interview_id,
         user_id=current_user.id,
     )
 
-    if interview is None:
+    if attempt is None:
         raise HTTPException(
             status_code=404,
             detail="Interview not found.",
         )
 
-    total_questions = len(interview.questions)
-    answered_questions = len(interview.answers)
+    total_questions = len(attempt.questions)
+    answered_questions = sum(
+        question.answer is not None
+        for question in attempt.questions
+    )
 
     return {
         "interview_id": interview_id,
         "total_questions": total_questions,
         "answered_questions": answered_questions,
-        "completed": interview.status == InterviewStatus.COMPLETED
+        "completed": attempt.status == InterviewStatus.COMPLETED
     }
 
 @router.post(
@@ -223,30 +231,28 @@ async def get_interview_result(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    interview = await get_user_interview(
+    attempt = await get_latest_attempt(
         db=db,
         interview_id=interview_id,
         user_id=current_user.id,
     )
 
-    if interview is None:
+    if attempt is None:
         raise HTTPException(
             status_code=404,
             detail="Interview not found.",
         )
 
-    if interview.status != InterviewStatus.COMPLETED:
+    if attempt.status != InterviewStatus.COMPLETED:
         raise HTTPException(
             status_code=409,
             detail="Interview has not been completed.",
         )
 
-    if interview.evaluation_summary is None:
+    if attempt.evaluation is None:
         raise HTTPException(
             status_code=500,
             detail="Interview result is unavailable.",
         )
 
-    return InterviewResultResponse.model_validate(
-        interview.evaluation_summary
-    )
+    return build_result_report(attempt)

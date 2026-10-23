@@ -15,6 +15,8 @@ load_dotenv(
 )
 
 import pytest_asyncio
+from alembic import command
+from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -26,7 +28,6 @@ from sqlalchemy.pool import NullPool
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.main import app
-from app.models import Base
 from app.models.user import UserModel
 
 
@@ -57,18 +58,35 @@ TestSessionLocal = async_sessionmaker(
 )
 
 
+API_DIR = Path(__file__).resolve().parent.parent
+
+
+def run_alembic(connection, action: str, revision: str) -> None:
+    # No ini file name, so env.py does not reconfigure logging.
+    config = Config()
+    config.set_main_option(
+        "script_location",
+        str(API_DIR / "migrations"),
+    )
+    config.attributes["connection"] = connection
+
+    getattr(command, action)(config, revision)
+
+
 @pytest_asyncio.fixture
 async def test_db():
+    # Build the schema from migrations, not create_all, so tests
+    # run against exactly what production gets.
     async with test_engine.begin() as connection:
         await connection.run_sync(
-            Base.metadata.create_all
+            run_alembic, "upgrade", "head"
         )
 
     yield
 
     async with test_engine.begin() as connection:
         await connection.run_sync(
-            Base.metadata.drop_all
+            run_alembic, "downgrade", "base"
         )
 
 

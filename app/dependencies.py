@@ -11,7 +11,7 @@ from app.config import settings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.user import UserModel
+from app.models.user import UserModel, UserStatus
 from app.repositories.user_repository import get_user_by_id
 
 security = HTTPBearer()
@@ -58,6 +58,12 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found.",
+        )
+
+    if user.status != UserStatus.ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled.",
         )
 
     return user

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 
 from app.dependencies import get_current_user
-from app.models.user import UserModel
+from app.models.user import UserModel, UserStatus
 from app.schemas.auth import (
     TokenResponse,
     UserCreate,
@@ -114,6 +114,12 @@ async def login(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
+        )
+
+    if user.status != UserStatus.ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled.",
         )
 
     access_token = create_access_token(

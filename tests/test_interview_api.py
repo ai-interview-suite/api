@@ -3,19 +3,26 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
-from app.models.interview import (
-    InterviewAnswerModel,
-    InterviewModel,
+from app.models.answer import AnswerModel
+from app.models.answer_evaluation import AnswerEvaluationModel
+from app.models.interview import InterviewModel
+from app.models.interview_attempt import (
+    InterviewAttemptModel,
     InterviewStatus,
 )
+from app.models.question import QuestionModel
 from app.models.user import UserModel
+from app.repositories.interview_repository import create_interview
 from app.routers import interview as interview_router
 from app.schemas.interview import (
+    AnswerEvaluation,
     Difficulty,
+    InterviewEvaluationResponse,
     InterviewQuestion,
     InterviewQuestionsResponse,
     QuestionCategory,
 )
+from app.services import interview_completion
 from app.services.exceptions import AIServiceUnavailableError
 
 
@@ -157,7 +164,30 @@ async def test_start_interview_saves_to_database(
 
     assert interview.resume_text == "Extracted test resume."
     assert interview.job_description == "Python backend developer"
-    assert len(interview.questions) == 5
+
+    attempt = (
+        await test_session.execute(
+            select(InterviewAttemptModel).where(
+                InterviewAttemptModel.interview_id == interview_id
+            )
+        )
+    ).scalar_one()
+
+    assert attempt.attempt_number == 1
+    assert attempt.status == InterviewStatus.IN_PROGRESS
+
+    positions = (
+        await test_session.execute(
+            select(QuestionModel.position)
+            .where(
+                QuestionModel.interview_attempt_id
+                == attempt.interview_attempt_id
+            )
+            .order_by(QuestionModel.position)
+        )
+    ).scalars().all()
+
+    assert positions == [1, 2, 3, 4, 5]
 
 
 @pytest.mark.asyncio
@@ -208,31 +238,67 @@ async def test_ai_failure_does_not_create_interview(
 
     assert result.scalars().all() == []
 
+    result = await test_session.execute(
+        select(InterviewAttemptModel)
+    )
+
+    assert result.scalars().all() == []
+
+async def create_test_interview(
+    session,
+    user_id: UUID,
+    question_count: int = 5,
+) -> InterviewModel:
+    return await create_interview(
+        db=session,
+        user_id=user_id,
+        resume_text="Python developer.",
+        job_description="Python backend developer.",
+        questions=make_five_questions().questions[:question_count],
+    )
+
+
+async def get_saved_answers(session, interview_id: UUID) -> dict[int, str]:
+    result = await session.execute(
+        select(QuestionModel.position, AnswerModel.answer)
+        .join(AnswerModel.question)
+        .join(QuestionModel.interview_attempt)
+        .where(InterviewAttemptModel.interview_id == interview_id)
+    )
+
+    return dict(result.all())
+
+
+def make_evaluations(question_ids: list[int]) -> InterviewEvaluationResponse:
+    return InterviewEvaluationResponse.model_construct(
+        evaluations=[
+            AnswerEvaluation(
+                question_id=question_id,
+                technical_accuracy=8,
+                relevance=7,
+                completeness=6,
+                communication=9,
+                evidence=[f"Evidence {question_id}"],
+                strengths=[f"Strength {question_id}"],
+                weaknesses=[f"Weakness {question_id}"],
+                feedback=f"Feedback for answer {question_id}.",
+            )
+            for question_id in question_ids
+        ]
+    )
+
+
 @pytest.mark.asyncio
 async def test_submit_answer_persists_to_database(
     client,
     test_session,
     test_user_id,
 ):
-    interview = InterviewModel(
-        user_id=test_user_id,
-        resume_text="Python developer.",
-        job_description="Python backend developer.",
-        questions=[
-            {
-                "id": 1,
-                "question": "Explain dependency injection in FastAPI.",
-                "category": "technical",
-                "difficulty": "medium",
-                "expected_topics": ["Depends"],
-            }
-        ],
-        status=InterviewStatus.IN_PROGRESS,
+    interview = await create_test_interview(
+        test_session,
+        test_user_id,
+        question_count=1,
     )
-
-    test_session.add(interview)
-    await test_session.commit()
-    await test_session.refresh(interview)
 
     response = await client.post(
         f"/interview/{interview.id}/answers",
@@ -244,18 +310,201 @@ async def test_submit_answer_persists_to_database(
 
     assert response.status_code == 200
 
-    result = await test_session.execute(
-        select(InterviewAnswerModel).where(
-            InterviewAnswerModel.interview_id == interview.id,
-            InterviewAnswerModel.question_id == 1,
+    assert await get_saved_answers(test_session, interview.id) == {
+        1: "FastAPI uses Depends for dependency injection.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_resubmitting_answer_replaces_it(
+    client,
+    test_session,
+    test_user_id,
+):
+    interview = await create_test_interview(
+        test_session,
+        test_user_id,
+        question_count=1,
+    )
+
+    for answer in ["First answer.", "Second answer."]:
+        response = await client.post(
+            f"/interview/{interview.id}/answers",
+            json={"question_id": 1, "answer": answer},
         )
+
+        assert response.status_code == 200
+
+    assert await get_saved_answers(test_session, interview.id) == {
+        1: "Second answer.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_answer_to_unknown_question_is_rejected(
+    client,
+    test_session,
+    test_user_id,
+):
+    interview = await create_test_interview(
+        test_session,
+        test_user_id,
+        question_count=1,
     )
 
-    saved_answer = result.scalar_one()
-
-    assert saved_answer.answer == (
-        "FastAPI uses Depends for dependency injection."
+    response = await client.post(
+        f"/interview/{interview.id}/answers",
+        json={"question_id": 9, "answer": "Answer."},
     )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Question does not belong to this interview."
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_requires_all_answers(
+    client,
+    test_session,
+    test_user_id,
+):
+    interview = await create_test_interview(test_session, test_user_id)
+
+    await client.post(
+        f"/interview/{interview.id}/answers",
+        json={"question_id": 1, "answer": "Only one answer."},
+    )
+
+    response = await client.post(f"/interview/{interview.id}/submit")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Please answer all questions before submitting."
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_interview_saves_evaluations_and_result(
+    client,
+    test_session,
+    test_user_id,
+    monkeypatch,
+):
+    interview = await create_test_interview(test_session, test_user_id)
+
+    for question_id in range(1, 6):
+        await client.post(
+            f"/interview/{interview.id}/answers",
+            json={
+                "question_id": question_id,
+                "answer": f"Answer {question_id}.",
+            },
+        )
+
+    async def fake_evaluate(resume_text, job_description, questions, answers):
+        assert answers == {
+            question_id: f"Answer {question_id}."
+            for question_id in range(1, 6)
+        }
+
+        return make_evaluations([question.id for question in questions])
+
+    monkeypatch.setattr(
+        interview_completion,
+        "evaluate_interview",
+        fake_evaluate,
+    )
+
+    response = await client.post(f"/interview/{interview.id}/submit")
+
+    assert response.status_code == 200
+
+    report = response.json()
+
+    # 8*0.40 + 7*0.25 + 6*0.20 + 9*0.15 = 7.5 -> 75
+    assert report["overall_score"] == 75
+    assert report["recommendation"] == "good"
+    assert report["total_questions"] == 5
+    assert [item["question_id"] for item in report["question_results"]] == [
+        1, 2, 3, 4, 5,
+    ]
+    assert report["question_results"][0]["evidence"] == ["Evidence 1"]
+
+    # This session created the attempt; reload its cached copy.
+    attempt = (
+        await test_session.execute(
+            select(InterviewAttemptModel)
+            .where(InterviewAttemptModel.interview_id == interview.id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+
+    assert attempt.status == InterviewStatus.COMPLETED
+    assert attempt.completed_at is not None
+
+    evaluations = (
+        await test_session.execute(select(AnswerEvaluationModel))
+    ).scalars().all()
+
+    assert len(evaluations) == 5
+    assert {evaluation.score for evaluation in evaluations} == {75}
+
+    # The result endpoint rebuilds the same report from the tables.
+    result = await client.get(f"/interview/{interview.id}/result")
+
+    assert result.status_code == 200
+    assert result.json() == report
+
+    # Submitting again returns the saved result without calling the AI.
+    async def should_not_evaluate(*args, **kwargs):
+        raise AssertionError("AI should not be called again.")
+
+    monkeypatch.setattr(
+        interview_completion,
+        "evaluate_interview",
+        should_not_evaluate,
+    )
+
+    again = await client.post(f"/interview/{interview.id}/submit")
+
+    assert again.status_code == 200
+    assert again.json() == report
+
+    status_response = await client.get(f"/interview/{interview.id}")
+
+    assert status_response.json() == {
+        "interview_id": str(interview.id),
+        "total_questions": 5,
+        "answered_questions": 5,
+        "completed": True,
+    }
+
+    late_answer = await client.post(
+        f"/interview/{interview.id}/answers",
+        json={"question_id": 1, "answer": "Too late."},
+    )
+
+    assert late_answer.status_code == 400
+
+    listing = (await client.get("/interview/")).json()
+
+    assert listing[0]["status"] == "completed"
+    assert listing[0]["overall_score"] == 75
+    assert listing[0]["recommendation"] == "good"
+
+
+@pytest.mark.asyncio
+async def test_result_of_unfinished_interview_is_conflict(
+    client,
+    test_session,
+    test_user_id,
+):
+    interview = await create_test_interview(test_session, test_user_id)
+
+    response = await client.get(f"/interview/{interview.id}/result")
+
+    assert response.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -270,43 +519,22 @@ async def test_list_interviews_returns_only_current_user_interviews(
     )
     test_session.add(other_user)
     await test_session.commit()
-    await test_session.refresh(other_user)
 
-    question = {
-        "id": 1,
-        "question": "Explain dependency injection in FastAPI.",
-        "category": "technical",
-        "difficulty": "medium",
-        "expected_topics": ["Depends"],
-    }
-
-    own_interview = InterviewModel(
-        user_id=test_user_id,
-        resume_text="Python developer.",
-        job_description="Python backend developer.",
-        questions=[question],
-        status=InterviewStatus.IN_PROGRESS,
+    own_interview = await create_test_interview(
+        test_session,
+        test_user_id,
+        question_count=2,
     )
-    other_interview = InterviewModel(
-        user_id=other_user.id,
-        resume_text="Java developer.",
-        job_description="Java backend developer.",
-        questions=[question],
-        status=InterviewStatus.IN_PROGRESS,
+    await create_test_interview(
+        test_session,
+        other_user.id,
+        question_count=2,
     )
 
-    test_session.add_all([own_interview, other_interview])
-    await test_session.commit()
-    await test_session.refresh(own_interview)
-
-    test_session.add(
-        InterviewAnswerModel(
-            interview_id=own_interview.id,
-            question_id=1,
-            answer="FastAPI uses Depends.",
-        )
+    await client.post(
+        f"/interview/{own_interview.id}/answers",
+        json={"question_id": 1, "answer": "FastAPI uses Depends."},
     )
-    await test_session.commit()
 
     response = await client.get("/interview/")
 
@@ -317,6 +545,7 @@ async def test_list_interviews_returns_only_current_user_interviews(
     assert len(body) == 1
     assert body[0]["interview_id"] == str(own_interview.id)
     assert body[0]["status"] == "in_progress"
-    assert body[0]["total_questions"] == 1
+    assert body[0]["total_questions"] == 2
     assert body[0]["answered_questions"] == 1
     assert body[0]["overall_score"] is None
+    assert body[0]["recommendation"] is None

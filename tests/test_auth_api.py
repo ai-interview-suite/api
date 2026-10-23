@@ -1,3 +1,8 @@
+from sqlalchemy import update
+
+from app.models.user import UserModel, UserStatus
+
+
 async def register(client, email, password="strong-password"):
     return await client.post(
         "/auth/register",
@@ -136,3 +141,54 @@ async def test_me_with_invalid_token(anonymous_client):
     )
 
     assert response.status_code == 401
+
+
+async def disable_user(session, email):
+    await session.execute(
+        update(UserModel)
+        .where(UserModel.email == email)
+        .values(status=UserStatus.DISABLED)
+    )
+    await session.commit()
+
+
+async def test_disabled_user_cannot_log_in(anonymous_client, test_session):
+
+    email = "disabled@example.com"
+
+    await register(anonymous_client, email)
+    await disable_user(test_session, email)
+
+    response = await login(anonymous_client, email)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Account is disabled."
+
+
+async def test_disabled_user_token_is_rejected(anonymous_client, test_session):
+
+    email = "disabled-later@example.com"
+
+    await register(anonymous_client, email)
+
+    token = (await login(anonymous_client, email)).json()["access_token"]
+
+    await disable_user(test_session, email)
+
+    response = await anonymous_client.get(
+        "/auth/me",
+        headers={
+            "Authorization": f"Bearer {token}"
+        },
+    )
+
+    assert response.status_code == 403
+
+
+async def test_login_email_is_case_insensitive(anonymous_client):
+
+    await register(anonymous_client, "Mixed.Case@example.com")
+
+    response = await login(anonymous_client, "mixed.case@EXAMPLE.com")
+
+    assert response.status_code == 200

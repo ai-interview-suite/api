@@ -1,4 +1,9 @@
-from app.schemas.interview import InterviewRecommendation
+from app.models.interview_attempt import InterviewAttemptModel
+from app.schemas.interview import (
+    InterviewQuestionResult,
+    InterviewRecommendation,
+    InterviewResultResponse,
+)
 
 
 def get_recommendation(
@@ -50,4 +55,45 @@ def build_conclusion(
         f"The candidate's overall score was {score}/100. "
         "The interview indicates that significant improvement "
         "is needed in one or more important areas."
+    )
+
+
+def build_result_report(
+    attempt: InterviewAttemptModel,
+) -> InterviewResultResponse:
+    """Rebuild the result of a completed attempt from its saved
+    evaluations. Needs questions, answers and evaluations loaded."""
+
+    if attempt.evaluation is None:
+        raise RuntimeError(
+            "Completed interview has no saved evaluation."
+        )
+
+    question_results = []
+
+    for question in attempt.questions:
+        evaluation = question.answer.evaluation
+
+        question_results.append(
+            InterviewQuestionResult(
+                question_id=question.position,
+                score=evaluation.score,
+                technical_accuracy=evaluation.technical_accuracy,
+                relevance=evaluation.relevance,
+                completeness=evaluation.completeness,
+                communication=evaluation.communication,
+                evidence=evaluation.evaluation["evidence"],
+                strengths=evaluation.evaluation["strengths"],
+                weaknesses=evaluation.evaluation["weaknesses"],
+                feedback=evaluation.feedback,
+            )
+        )
+
+    return InterviewResultResponse(
+        interview_id=attempt.interview_id,
+        overall_score=attempt.evaluation.overall_score,
+        recommendation=attempt.evaluation.recommendation,
+        conclusion=attempt.evaluation.conclusion,
+        total_questions=len(attempt.questions),
+        question_results=question_results,
     )

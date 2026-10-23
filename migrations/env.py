@@ -89,6 +89,14 @@ async def run_async_migrations() -> None:
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
 
+    # Tests pass an open connection, since they already run
+    # inside an event loop and can't call asyncio.run().
+    connection = config.attributes.get("connection")
+
+    if connection is not None:
+        do_run_migrations(connection)
+        return
+
     asyncio.run(run_async_migrations())
 
 

@@ -68,3 +68,6 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_users_email'), table_name='users')
     op.drop_table('users')
     # ### end Alembic commands ###
+
+    # Alembic does not drop the PostgreSQL enum type with the table.
+    sa.Enum(name='interviewstatus').drop(op.get_bind(), checkfirst=True)
