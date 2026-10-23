@@ -66,7 +66,7 @@ async def get_latest_attempt(
         select(InterviewAttemptModel)
         .join(InterviewAttemptModel.interview)
         .where(
-            InterviewModel.id == interview_id,
+            InterviewModel.interview_id == interview_id,
             InterviewModel.user_id == user_id,
         )
         .order_by(InterviewAttemptModel.attempt_number.desc())
@@ -122,7 +122,7 @@ async def get_user_interview_summaries(
 
     result = await db.execute(
         select(
-            InterviewModel.id.label("interview_id"),
+            InterviewModel.interview_id,
             InterviewModel.job_description,
             InterviewModel.created_at,
             latest_attempt.c.status,
@@ -133,7 +133,7 @@ async def get_user_interview_summaries(
         )
         .join(
             latest_attempt,
-            latest_attempt.c.interview_id == InterviewModel.id,
+            latest_attempt.c.interview_id == InterviewModel.interview_id,
         )
         .outerjoin(
             InterviewAttemptEvaluationModel,

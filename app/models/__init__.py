@@ -1,6 +1,6 @@
 from app.models.base import Base
 from app.models.user import UserModel, UserStatus
-from app.models.interview import InterviewAnswerModel, InterviewModel
+from app.models.interview import InterviewModel
 from app.models.interview_attempt import (
     InterviewAttemptModel,
     InterviewStatus,
@@ -17,7 +17,6 @@ __all__ = [
     "UserModel",
     "UserStatus",
     "InterviewModel",
-    "InterviewAnswerModel",
     "InterviewAttemptModel",
     "InterviewStatus",
     "QuestionModel",
