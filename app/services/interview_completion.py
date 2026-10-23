@@ -1,9 +1,15 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.interview import InterviewStatus
-from app.repositories.interview_repository import get_user_interview
+from app.models.answer_evaluation import AnswerEvaluationModel
+from app.models.interview_attempt import InterviewStatus
+from app.models.interview_attempt_evaluation import (
+    InterviewAttemptEvaluationModel,
+)
+from app.repositories.interview_repository import get_latest_attempt
 from app.schemas.interview import (
     InterviewQuestion,
     InterviewResultResponse,
@@ -14,6 +20,7 @@ from app.services.evaluation_validation import (
 )
 from app.services.result_service import (
     build_conclusion,
+    build_result_report,
     get_recommendation,
 )
 from app.services.scoring import (
@@ -28,49 +35,43 @@ async def complete_interview(
     user_id: UUID,
 ) -> InterviewResultResponse:
 
-    interview = await get_user_interview(
+    attempt = await get_latest_attempt(
         db=db,
         interview_id=interview_id,
         user_id=user_id,
     )
 
-    if interview is None:
+    if attempt is None:
         raise LookupError("Interview not found.")
 
     # Return the saved result instead of calling AI again.
-    if interview.status == InterviewStatus.COMPLETED:
-        if interview.evaluation_summary is None:
-            raise RuntimeError(
-                "Completed interview has no saved evaluation."
-            )
+    if attempt.status == InterviewStatus.COMPLETED:
+        return build_result_report(attempt)
 
-        return InterviewResultResponse.model_validate(
-            interview.evaluation_summary
-        )
-
-    question_ids = {
-        question["id"]
-        for question in interview.questions
-    }
-
-    answers_by_id = {
-        answer.question_id: answer.answer
-        for answer in interview.answers
-    }
-
-    if set(answers_by_id) != question_ids:
+    if any(question.answer is None for question in attempt.questions):
         raise ValueError(
             "Please answer all questions before submitting."
         )
 
     questions = [
-        InterviewQuestion.model_validate(item)
-        for item in interview.questions
+        InterviewQuestion(
+            id=question.position,
+            question=question.question,
+            category=question.category,
+            difficulty=question.difficulty,
+            expected_topics=question.expected_topics,
+        )
+        for question in attempt.questions
     ]
 
+    answers_by_id = {
+        question.position: question.answer.answer
+        for question in attempt.questions
+    }
+
     evaluation = await evaluate_interview(
-        resume_text=interview.resume_text,
-        job_description=interview.job_description,
+        resume_text=attempt.interview.resume_text,
+        job_description=attempt.interview.job_description,
         questions=questions,
         answers=answers_by_id,
     )
@@ -88,52 +89,60 @@ async def complete_interview(
         overall_score
     )
 
-    conclusion = build_conclusion(
-        score=overall_score,
-        recommendation=recommendation,
-    )
-
-    question_results = build_question_results(
-        evaluation.evaluations
-    )
-
-    report = InterviewResultResponse(
-        interview_id=interview.id,
-        overall_score=overall_score,
-        recommendation=recommendation,
-        conclusion=conclusion,
-        total_questions=len(questions),
-        question_results=question_results,
-    )
-
-    evaluations_by_id = {
-        item.question_id: item
-        for item in evaluation.evaluations
+    results_by_id = {
+        result.question_id: result
+        for result in build_question_results(evaluation.evaluations)
     }
 
-    for answer in interview.answers:
-        item = evaluations_by_id[answer.question_id]
+    for question in attempt.questions:
+        result = results_by_id[question.position]
 
-        answer.score = next(
-            result.score
-            for result in question_results
-            if result.question_id == answer.question_id
+        question.answer.evaluation = AnswerEvaluationModel(
+            score=result.score,
+            technical_accuracy=result.technical_accuracy,
+            relevance=result.relevance,
+            completeness=result.completeness,
+            communication=result.communication,
+            feedback=result.feedback,
+            evaluation={
+                "evidence": result.evidence,
+                "strengths": result.strengths,
+                "weaknesses": result.weaknesses,
+            },
         )
 
-        answer.evaluation = item.model_dump(mode="json")
-
-    interview.overall_score = overall_score
-    interview.recommendation = recommendation.value
-    interview.conclusion = conclusion
-    interview.evaluation_summary = report.model_dump(
-        mode="json"
+    attempt.evaluation = InterviewAttemptEvaluationModel(
+        overall_score=overall_score,
+        recommendation=recommendation,
+        conclusion=build_conclusion(
+            score=overall_score,
+            recommendation=recommendation,
+        ),
     )
-    interview.status = InterviewStatus.COMPLETED
+    attempt.status = InterviewStatus.COMPLETED
+    attempt.completed_at = datetime.now(timezone.utc)
 
     try:
         await db.commit()
+    except IntegrityError:
+        await db.rollback()
+
+        # A concurrent submit may have saved its evaluation first.
+        saved_attempt = await get_latest_attempt(
+            db=db,
+            interview_id=interview_id,
+            user_id=user_id,
+        )
+
+        if (
+            saved_attempt is None
+            or saved_attempt.status != InterviewStatus.COMPLETED
+        ):
+            raise
+
+        return build_result_report(saved_attempt)
     except Exception:
         await db.rollback()
         raise
 
-    return report
+    return build_result_report(attempt)

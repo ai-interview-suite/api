@@ -41,6 +41,23 @@ Each answer is rated 0-10 on four axes, combined into a 0-100 score:
 The overall score is the mean of the per-answer scores, which maps to a
 recommendation of `excellent`, `good`, `borderline` or `needs_improvement`.
 
+### Data model
+
+```
+users 1─* interviews 1─* interview_attempts 1─* questions 1─1 answers 1─1 answer_evaluations
+                                   └──1─1 interview_attempt_evaluations
+```
+
+An interview holds the resume and job description; each attempt holds its own
+questions, answers and evaluation. Every interview currently has one attempt,
+and the API works on the latest one. The API's integer `question_id` is the
+question's `position` (1-5) within its attempt. Results are rebuilt from the
+evaluation rows, so `/submit` and `/result` always return the same report.
+
+The old `interviews.questions`/`status`/score columns and the
+`interview_answers` table are no longer written and will be dropped by a later
+migration.
+
 ## Setup
 
 Requires Python 3.12 and a running PostgreSQL server.
@@ -142,6 +159,27 @@ DATABASE_URL='postgresql+asyncpg://<user>:<password>@<host>.neon.tech/<db>?ssl=r
 python check_neon.py   # confirm the new revision is listed
 ```
 
+Because the migration runs while the previous version is still live, each
+revision must keep that version working: add tables and columns (with server
+defaults) first, and only drop or rename them in a later revision once no
+deployed code uses them. Before a revision that copies or drops data, take a
+backup by creating a branch in the Neon console.
+
+Revision `70750a06dc62` (interview attempts) converts `users.email` to
+case-insensitive `citext` and stops if two emails differ only by case. Check
+production first; the query must return no rows:
+
+```sql
+SELECT lower(email) FROM users GROUP BY lower(email) HAVING count(*) > 1;
+```
+
+Revision `943dab65b4f8` copies every existing interview into attempt #1 with
+its questions, answers and evaluations. It only inserts, and it stops (rolling
+everything back) if any interview, answer or evaluation was not copied. Run it
+on a Neon branch first, then on production immediately before deploying the
+code that reads the new tables: answers saved by the old code in between are
+not copied.
+
 The Neon project and its connection string are managed in the
 [Neon console](https://console.neon.tech).
 
@@ -152,7 +190,8 @@ request after a quiet period can take up to a minute.
 
 Every endpoint except the health check, register and login needs an
 `Authorization: Bearer <access_token>` header. Users can only see their own
-interviews.
+interviews. Emails are case-insensitive. A user whose `status` is `disabled`
+gets `403` on login and on every authenticated request.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -190,13 +229,22 @@ curl -X POST http://127.0.0.1:8000/interview/start \
 ## Tests
 
 The tests run against a separate PostgreSQL database configured in `.env.test`,
-which overrides `DATABASE_URL` and `CORS_ORIGINS` from `.env`. Its name must contain `test`; tables
-are created and dropped around each test, so never point it at real data.
+which overrides `DATABASE_URL` and `CORS_ORIGINS` from `.env`. Its name must contain `test`; the
+schema is built with `alembic upgrade head` and removed with `alembic downgrade base` around each
+test, so never point it at real data. Because tests use the migrations, every migration needs a
+working `downgrade()`.
 
 ```bash
 sudo -u postgres psql -c "CREATE USER interview_test WITH PASSWORD '<password>';"
 sudo -u postgres psql -c "CREATE DATABASE interview_test_db OWNER interview_test;"
 pytest
+```
+
+After changing a model, confirm the migrations match it (prints
+`No new upgrade operations detected.` when they do):
+
+```bash
+alembic check
 ```
 
 ## Project layout
@@ -207,7 +255,7 @@ app/
   config.py                  Pydantic settings loaded from .env
   database.py                Async SQLAlchemy engine and session dependency
   dependencies.py            Current-user dependency (bearer token)
-  models/                    SQLAlchemy models: users and interviews
+  models/                    SQLAlchemy models, one file per table
   repositories/              Database queries for users and interviews
   routers/
     auth.py                  Register, login and current-user endpoints
@@ -221,7 +269,7 @@ app/
     interview_completion.py  Evaluates answers and stores the result
     evaluation_validation.py Checks evaluations match the interview questions
     scoring.py               Weighted answer and overall scoring
-    result_service.py        Recommendation and conclusion text
+    result_service.py        Recommendation, conclusion and result report
     exceptions.py            AI service error types
 migrations/                  Alembic migrations
 check_openrouter.py          Manual OpenRouter connectivity check

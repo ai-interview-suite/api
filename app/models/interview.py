@@ -1,33 +1,36 @@
-from datetime import datetime, timezone
-from enum import Enum
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    DateTime,
     Enum as SQLAlchemyEnum,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base
+from app.models.base import Base, TimestampMixin
+# Old interviews.status column; moves to interview_attempts.
+from app.models.interview_attempt import InterviewStatus
+
+if TYPE_CHECKING:
+    from app.models.interview_attempt import InterviewAttemptModel
 
 
-class InterviewStatus(str, Enum):
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-
-
-class InterviewModel(Base):
+class InterviewModel(TimestampMixin, Base):
     __tablename__ = "interviews"
 
+    # Renamed to interview_id together with the code switch, so the
+    # code running during the migration keeps working.
     id: Mapped[UUID] = mapped_column(
         primary_key=True,
         default=uuid4,
+        server_default=text("gen_random_uuid()"),
     )
 
     user_id: Mapped[UUID] = mapped_column(
@@ -46,15 +49,17 @@ class InterviewModel(Base):
         nullable=False,
     )
 
-    questions: Mapped[list[dict]] = mapped_column(
+    # Old columns, replaced by interview_attempts and questions.
+    # Nullable so new code can stop writing them before they are dropped.
+    questions: Mapped[list[dict] | None] = mapped_column(
         JSON,
-        nullable=False,
+        nullable=True,
     )
 
-    status: Mapped[InterviewStatus] = mapped_column(
+    status: Mapped[InterviewStatus | None] = mapped_column(
         SQLAlchemyEnum(InterviewStatus),
         default=InterviewStatus.IN_PROGRESS,
-        nullable=False,
+        nullable=True,
     )
 
     overall_score: Mapped[int | None] = mapped_column(
@@ -72,12 +77,6 @@ class InterviewModel(Base):
         nullable=True,
     )
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        nullable=False,
-    )
-
     answers: Mapped[list["InterviewAnswerModel"]] = relationship(
         back_populates="interview",
         cascade="all, delete-orphan",
@@ -87,6 +86,22 @@ class InterviewModel(Base):
         JSON,
         nullable=True,
     )
+
+    attempts: Mapped[list["InterviewAttemptModel"]] = relationship(
+        back_populates="interview",
+        order_by="InterviewAttemptModel.attempt_number",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+# Serves "my interviews, newest first".
+Index(
+    "ix_interviews_user_id_created_at",
+    InterviewModel.user_id,
+    InterviewModel.created_at.desc(),
+)
+
 
 class InterviewAnswerModel(Base):
     __tablename__ = "interview_answers"
