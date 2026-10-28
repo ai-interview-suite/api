@@ -2,11 +2,18 @@ from fastapi import FastAPI
 from app.config import settings
 from app.routers import interview, auth
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
 app = FastAPI(
     title=settings.app_name,
     description=settings.app_description,
     version=settings.app_version,
+)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.session_secret_key,
+    same_site="lax",
+    https_only=False,  # Local development only
 )
 app.add_middleware(
     CORSMiddleware,

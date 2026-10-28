@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     # Comma-separated list of origins allowed to call the API from a browser
     cors_origins: str
 
+    google_client_id: str
+    google_client_secret: str
+    google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
+    session_secret_key: str
+    frontend_url: str = "http://localhost:3000"
+
+    redis_url: str
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",
