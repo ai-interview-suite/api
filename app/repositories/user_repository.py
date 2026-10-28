@@ -36,11 +36,13 @@ async def get_user_by_id(
 async def create_user(
     db: AsyncSession,
     email: str,
-    password_hash: str,
+    password_hash: str | None,
+    google_sub: str | None = None,
 ) -> UserModel:
     user = UserModel(
         email=email.strip().lower(),
         password_hash=password_hash,
+        google_sub=google_sub,
     )
 
     db.add(user)

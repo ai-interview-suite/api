@@ -4,7 +4,8 @@ A FastAPI service that runs AI-powered mock technical interviews. Upload a resum
 and a job description, answer five generated questions, and get a scored
 evaluation with per-question feedback and a hiring recommendation.
 
-Users register and log in with email and password; interviews are stored in
+Users register and log in with email and password, or sign in with Google;
+interviews are stored in
 PostgreSQL and scoped to the user who created them.
 
 Question generation and answer evaluation run through [OpenRouter](https://openrouter.ai).
@@ -60,7 +61,8 @@ points to.
 
 ## Setup
 
-Requires Python 3.12 and a running PostgreSQL server.
+Requires Python 3.12, a running PostgreSQL server and a Redis server (e.g. a
+free [Upstash](https://upstash.com) database) for Google sign-in.
 
 ```bash
 python -m venv venv
@@ -92,6 +94,12 @@ sudo -u postgres psql -c "CREATE DATABASE interview_db OWNER <db_user>;"
 | `AI_MODEL` | yes | — (e.g. `nvidia/nemotron-3-super-120b-a12b:free`) |
 | `JWT_SECRET_KEY` | yes | — |
 | `CORS_ORIGINS` | yes | — (comma-separated, e.g. `http://localhost:3000,https://aiinterviewsuite.vercel.app`) |
+| `GOOGLE_CLIENT_ID` | yes | — (Google Cloud OAuth client) |
+| `GOOGLE_CLIENT_SECRET` | yes | — |
+| `SESSION_SECRET_KEY` | yes | — (signs the OAuth state cookie) |
+| `REDIS_URL` | yes | — (e.g. `rediss://default:<password>@<host>.upstash.io:6379`) |
+| `GOOGLE_REDIRECT_URI` | no | `http://localhost:8000/auth/google/callback` |
+| `FRONTEND_URL` | no | `http://localhost:3000` |
 | `JWT_ALGORITHM` | no | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | no | `30` |
 | `APP_NAME` | no | `AI Interview Service` |
@@ -105,6 +113,27 @@ alembic upgrade head
 ```
 
 To confirm your OpenRouter key and model work, run `python check_openrouter.py`.
+To confirm `REDIS_URL` works, run `python check_redis.py` (prints `True`).
+
+### Google sign-in
+
+Create an OAuth client of type *Web application* in the
+[Google Cloud console](https://console.cloud.google.com/apis/credentials) and add
+`GOOGLE_REDIRECT_URI` (the API's `/auth/google/callback`) as an authorised
+redirect URI. The flow is:
+
+1. The front links to `GET /auth/google/login`, which redirects to Google.
+2. Google redirects back to `GET /auth/google/callback`. The API finds the user
+   by Google id (`users.google_sub`) or creates one without a password, stores
+   a one-time code in Redis for 60 seconds, and redirects to
+   `FRONTEND_URL/auth/google/callback?code=...`.
+3. The front posts the code to `POST /auth/google/exchange` and gets the usual
+   access token. Each code works once.
+
+A Google account whose email is not verified is rejected. If a password account
+already uses that email, sign-in is refused (`?error=account_exists`) rather
+than linking the two. Users created through Google cannot log in with a
+password. Failures redirect to `FRONTEND_URL/login?error=<reason>`.
 
 ### Hosted PostgreSQL (Neon)
 
@@ -148,7 +177,10 @@ Render service settings:
 - **Environment:** every variable from the [Setup](#setup) table. `DATABASE_URL`
   is the Neon connection string in the asyncpg form shown under
   [Hosted PostgreSQL (Neon)](#hosted-postgresql-neon), and `CORS_ORIGINS` must
-  include `https://aiinterviewsuite.vercel.app`.
+  include `https://aiinterviewsuite.vercel.app`. Set `GOOGLE_REDIRECT_URI` to
+  `https://ai-interview-suite-api.onrender.com/auth/google/callback` (and add it
+  to the Google OAuth client) and `FRONTEND_URL` to
+  `https://aiinterviewsuite.vercel.app`.
 
 Migrations are **not** run by Render. Before merging a change that adds an
 Alembic revision, apply it to Neon from your machine:
@@ -187,6 +219,10 @@ columns and the code must change together, so run it on production and merge
 straight away; requests fail for the few minutes until Render's deploy is
 live.
 
+Revisions `86be904e60f1` (nullable `users.password_hash`) and `b89864d5d044`
+(`users.google_sub` with a unique constraint) only relax or add columns, so they
+can run before the Google sign-in code is deployed.
+
 The Neon project and its connection string are managed in the
 [Neon console](https://console.neon.tech).
 
@@ -195,7 +231,8 @@ request after a quiet period can take up to a minute.
 
 ## API
 
-Every endpoint except the health check, register and login needs an
+Every endpoint except the health check, register, login and the Google
+sign-in endpoints needs an
 `Authorization: Bearer <access_token>` header. Users can only see their own
 interviews. Emails are case-insensitive. A user whose `status` is `disabled`
 gets `403` on login and on every authenticated request.
@@ -206,6 +243,9 @@ gets `403` on login and on every authenticated request.
 | `POST` | `/auth/register` | Create a user (`email`, `password` of 8+ characters) |
 | `POST` | `/auth/login` | Exchange email and password for an access token |
 | `GET` | `/auth/me` | The current user |
+| `GET` | `/auth/google/login` | Redirect to Google sign-in |
+| `GET` | `/auth/google/callback` | Google redirect target; redirects to the front with a one-time code |
+| `POST` | `/auth/google/exchange` | Exchange the one-time `code` for an access token |
 | `GET` | `/interview/` | List the current user's interviews, newest first |
 | `POST` | `/interview/start` | Upload a resume PDF + job description, get five questions |
 | `POST` | `/interview/{interview_id}/answers` | Submit one answer |
@@ -258,19 +298,21 @@ alembic check
 
 ```
 app/
-  main.py                    FastAPI app, CORS and router wiring
+  main.py                    FastAPI app, CORS, session middleware and router wiring
   config.py                  Pydantic settings loaded from .env
   database.py                Async SQLAlchemy engine and session dependency
   dependencies.py            Current-user dependency (bearer token)
   models/                    SQLAlchemy models, one file per table
   repositories/              Database queries for users and interviews
   routers/
-    auth.py                  Register, login and current-user endpoints
+    auth.py                  Register, login, Google sign-in and current-user endpoints
     interview.py             Interview endpoints
   schemas/                   Request/response models and enums
   services/
     ai_service.py            OpenRouter calls for questions and evaluation
     auth.py                  JWT creation and verification
+    google_oauth.py          Authlib OAuth client for Google
+    redis_client.py          Async Redis client (one-time Google login codes)
     password.py              Password hashing (bcrypt)
     resume_parser.py         PDF text extraction
     interview_completion.py  Evaluates answers and stores the result
@@ -281,10 +323,14 @@ app/
 migrations/                  Alembic migrations
 check_openrouter.py          Manual OpenRouter connectivity check
 check_neon.py                Manual Neon database check (tables, Alembic revision)
+check_redis.py               Manual Redis connectivity check
 tests/                       Pytest suite
 ```
 
 ## Notes and limitations
+
+- The session cookie used during the Google redirect is not marked `Secure`
+  (`https_only=False` in `app/main.py`).
 
 - The service expects the model to return exactly five questions and five
   evaluations; malformed responses surface as `502`, and upstream outages as `503`.

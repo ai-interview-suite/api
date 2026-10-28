@@ -20,6 +20,22 @@ from app.repositories.user_repository import (
     create_user,
     get_user_by_email,
 )
+import hashlib
+import secrets
+from uuid import UUID
+
+from authlib.integrations.starlette_client import OAuthError
+from fastapi import Request
+from fastapi.responses import RedirectResponse
+
+from app.services.google_oauth import oauth
+from app.services.redis_client import redis_client
+from app.config import settings
+from sqlalchemy import select
+from pydantic import BaseModel, Field
+
+class GoogleCodeExchange(BaseModel):
+    code: str = Field(min_length=20, max_length=200)
 
 
 router = APIRouter(
@@ -99,7 +115,7 @@ async def login(
     email = str(request.email).strip().lower()
     user = await get_user_by_email(db, email)
 
-    if user is None:
+    if user is None or user.password_hash is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
@@ -129,3 +145,113 @@ async def login(
     return TokenResponse(
         access_token=access_token,
     )
+
+@router.get("/google/login")
+async def google_login(request: Request):
+    client = oauth.create_client("google")
+    return await client.authorize_redirect(
+        request,
+        settings.google_redirect_uri,
+    )
+
+@router.get("/google/callback")
+async def google_callback(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    client = oauth.create_client("google")
+
+    try:
+        token = await client.authorize_access_token(request)
+        user_info = token.get("userinfo")
+
+        if not user_info:
+            return RedirectResponse(
+                f"{settings.frontend_url}/login?error=google_login_failed"
+            )
+
+        google_sub = user_info.get("sub")
+        email = user_info.get("email")
+
+        if (
+            not google_sub
+            or not email
+            or user_info.get("email_verified") is not True
+        ):
+            return RedirectResponse(
+                f"{settings.frontend_url}/login?error=google_email_unverified"
+            )
+
+        email = email.strip().lower()
+
+        result = await db.execute(
+            select(UserModel).where(
+                UserModel.google_sub == google_sub
+            )
+        )
+        user = result.scalar_one_or_none()
+
+        if user is None:
+            existing = await get_user_by_email(db, email)
+
+            # Never silently link an existing account by email alone.
+            if existing is not None:
+                return RedirectResponse(
+                    f"{settings.frontend_url}/login?error=account_exists"
+                )
+
+            user = await create_user(
+                db=db,
+                email=email,
+                password_hash=None,
+                google_sub=google_sub,
+            )
+
+        if user.status != UserStatus.ACTIVE:
+            return RedirectResponse(
+                f"{settings.frontend_url}/login?error=account_disabled"
+            )
+
+        code = secrets.token_urlsafe(32)
+        code_hash = hashlib.sha256(code.encode()).hexdigest()
+
+        await redis_client.set(
+            f"google-login:{code_hash}",
+            str(user.user_id),
+            ex=60,
+            nx=True,
+        )
+
+        return RedirectResponse(
+            f"{settings.frontend_url}/auth/google/callback?code={code}",
+            status_code=302,
+        )
+
+    except OAuthError:
+        return RedirectResponse(
+            f"{settings.frontend_url}/login?error=google_login_failed"
+        )
+
+@router.post("/google/exchange", response_model=TokenResponse)
+async def google_exchange(request: GoogleCodeExchange):
+    code_hash = hashlib.sha256(request.code.encode()).hexdigest()
+
+    user_id = await redis_client.getdel(
+        f"google-login:{code_hash}"
+    )
+
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Login code is invalid or expired.",
+        )
+
+    try:
+        access_token = create_access_token(UUID(user_id))
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid login code.",
+        )
+
+    return TokenResponse(access_token=access_token)

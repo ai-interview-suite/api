@@ -30,9 +30,9 @@ class UserModel(TimestampMixin, Base):
         nullable=False,
     )
 
-    password_hash: Mapped[str] = mapped_column(
+    password_hash: Mapped[str | None] = mapped_column(
         String(255),
-        nullable=False,
+        nullable=True,
     )
 
     status: Mapped[UserStatus] = mapped_column(
@@ -46,4 +46,10 @@ class UserModel(TimestampMixin, Base):
         default=UserStatus.ACTIVE,
         server_default=UserStatus.ACTIVE.value,
         nullable=False,
+    )
+
+    google_sub: Mapped[str | None] = mapped_column(
+        String(255),
+        unique=True,
+        nullable=True,
     )
