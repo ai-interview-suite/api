@@ -42,7 +42,7 @@ class InterviewAttemptModel(TimestampMixin, Base):
     )
 
     interview_id: Mapped[UUID] = mapped_column(
-        ForeignKey("interviews.id", ondelete="CASCADE"),
+        ForeignKey("interviews.interview_id", ondelete="CASCADE"),
         nullable=False,
     )
 

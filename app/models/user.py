@@ -16,9 +16,7 @@ class UserStatus(str, Enum):
 class UserModel(TimestampMixin, Base):
     __tablename__ = "users"
 
-    # Renamed to user_id together with the code switch, so the code
-    # running during the migration keeps working.
-    id: Mapped[UUID] = mapped_column(
+    user_id: Mapped[UUID] = mapped_column(
         primary_key=True,
         default=uuid4,
         server_default=text("gen_random_uuid()"),

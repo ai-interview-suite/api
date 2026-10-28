@@ -156,7 +156,7 @@ async def test_start_interview_saves_to_database(
 
     result = await test_session.execute(
         select(InterviewModel).where(
-            InterviewModel.id == interview_id
+            InterviewModel.interview_id == interview_id
         )
     )
 
@@ -301,7 +301,7 @@ async def test_submit_answer_persists_to_database(
     )
 
     response = await client.post(
-        f"/interview/{interview.id}/answers",
+        f"/interview/{interview.interview_id}/answers",
         json={
             "question_id": 1,
             "answer": "FastAPI uses Depends for dependency injection.",
@@ -310,7 +310,7 @@ async def test_submit_answer_persists_to_database(
 
     assert response.status_code == 200
 
-    assert await get_saved_answers(test_session, interview.id) == {
+    assert await get_saved_answers(test_session, interview.interview_id) == {
         1: "FastAPI uses Depends for dependency injection.",
     }
 
@@ -329,13 +329,13 @@ async def test_resubmitting_answer_replaces_it(
 
     for answer in ["First answer.", "Second answer."]:
         response = await client.post(
-            f"/interview/{interview.id}/answers",
+            f"/interview/{interview.interview_id}/answers",
             json={"question_id": 1, "answer": answer},
         )
 
         assert response.status_code == 200
 
-    assert await get_saved_answers(test_session, interview.id) == {
+    assert await get_saved_answers(test_session, interview.interview_id) == {
         1: "Second answer.",
     }
 
@@ -353,7 +353,7 @@ async def test_answer_to_unknown_question_is_rejected(
     )
 
     response = await client.post(
-        f"/interview/{interview.id}/answers",
+        f"/interview/{interview.interview_id}/answers",
         json={"question_id": 9, "answer": "Answer."},
     )
 
@@ -372,11 +372,11 @@ async def test_submit_requires_all_answers(
     interview = await create_test_interview(test_session, test_user_id)
 
     await client.post(
-        f"/interview/{interview.id}/answers",
+        f"/interview/{interview.interview_id}/answers",
         json={"question_id": 1, "answer": "Only one answer."},
     )
 
-    response = await client.post(f"/interview/{interview.id}/submit")
+    response = await client.post(f"/interview/{interview.interview_id}/submit")
 
     assert response.status_code == 400
     assert response.json()["detail"] == (
@@ -395,7 +395,7 @@ async def test_submit_interview_saves_evaluations_and_result(
 
     for question_id in range(1, 6):
         await client.post(
-            f"/interview/{interview.id}/answers",
+            f"/interview/{interview.interview_id}/answers",
             json={
                 "question_id": question_id,
                 "answer": f"Answer {question_id}.",
@@ -416,7 +416,7 @@ async def test_submit_interview_saves_evaluations_and_result(
         fake_evaluate,
     )
 
-    response = await client.post(f"/interview/{interview.id}/submit")
+    response = await client.post(f"/interview/{interview.interview_id}/submit")
 
     assert response.status_code == 200
 
@@ -435,7 +435,7 @@ async def test_submit_interview_saves_evaluations_and_result(
     attempt = (
         await test_session.execute(
             select(InterviewAttemptModel)
-            .where(InterviewAttemptModel.interview_id == interview.id)
+            .where(InterviewAttemptModel.interview_id == interview.interview_id)
             .execution_options(populate_existing=True)
         )
     ).scalar_one()
@@ -451,7 +451,7 @@ async def test_submit_interview_saves_evaluations_and_result(
     assert {evaluation.score for evaluation in evaluations} == {75}
 
     # The result endpoint rebuilds the same report from the tables.
-    result = await client.get(f"/interview/{interview.id}/result")
+    result = await client.get(f"/interview/{interview.interview_id}/result")
 
     assert result.status_code == 200
     assert result.json() == report
@@ -466,22 +466,22 @@ async def test_submit_interview_saves_evaluations_and_result(
         should_not_evaluate,
     )
 
-    again = await client.post(f"/interview/{interview.id}/submit")
+    again = await client.post(f"/interview/{interview.interview_id}/submit")
 
     assert again.status_code == 200
     assert again.json() == report
 
-    status_response = await client.get(f"/interview/{interview.id}")
+    status_response = await client.get(f"/interview/{interview.interview_id}")
 
     assert status_response.json() == {
-        "interview_id": str(interview.id),
+        "interview_id": str(interview.interview_id),
         "total_questions": 5,
         "answered_questions": 5,
         "completed": True,
     }
 
     late_answer = await client.post(
-        f"/interview/{interview.id}/answers",
+        f"/interview/{interview.interview_id}/answers",
         json={"question_id": 1, "answer": "Too late."},
     )
 
@@ -502,7 +502,7 @@ async def test_result_of_unfinished_interview_is_conflict(
 ):
     interview = await create_test_interview(test_session, test_user_id)
 
-    response = await client.get(f"/interview/{interview.id}/result")
+    response = await client.get(f"/interview/{interview.interview_id}/result")
 
     assert response.status_code == 409
 
@@ -527,12 +527,12 @@ async def test_list_interviews_returns_only_current_user_interviews(
     )
     await create_test_interview(
         test_session,
-        other_user.id,
+        other_user.user_id,
         question_count=2,
     )
 
     await client.post(
-        f"/interview/{own_interview.id}/answers",
+        f"/interview/{own_interview.interview_id}/answers",
         json={"question_id": 1, "answer": "FastAPI uses Depends."},
     )
 
@@ -543,7 +543,7 @@ async def test_list_interviews_returns_only_current_user_interviews(
     body = response.json()
 
     assert len(body) == 1
-    assert body[0]["interview_id"] == str(own_interview.id)
+    assert body[0]["interview_id"] == str(own_interview.interview_id)
     assert body[0]["status"] == "in_progress"
     assert body[0]["total_questions"] == 2
     assert body[0]["answered_questions"] == 1

@@ -42,7 +42,7 @@ async def list_interviews(
 ):
     summaries = await get_user_interview_summaries(
         db=db,
-        user_id=current_user.id,
+        user_id=current_user.user_id,
     )
 
     return [
@@ -106,14 +106,14 @@ async def start_interview(
 
     interview = await create_interview(
         db=db,
-        user_id = current_user.id,
+        user_id = current_user.user_id,
         resume_text = resume_text,
         job_description = job_description,
         questions = questions.questions
     )
 
     return InterviewStartResponse(
-        interview_id=interview.id,
+        interview_id=interview.interview_id,
         questions=questions.questions,
     )
 
@@ -127,7 +127,7 @@ async def submit_answer(
     attempt = await get_latest_attempt(
         db=db,
         interview_id=interview_id,
-        user_id=current_user.id,
+        user_id=current_user.user_id,
     )
 
     if attempt is None:
@@ -164,7 +164,7 @@ async def get_interview_status(
     attempt = await get_latest_attempt(
         db=db,
         interview_id=interview_id,
-        user_id=current_user.id,
+        user_id=current_user.user_id,
     )
 
     if attempt is None:
@@ -199,7 +199,7 @@ async def submit_interview(
         return await complete_interview(
             db=db,
             interview_id=interview_id,
-            user_id=current_user.id,
+            user_id=current_user.user_id,
         )
     except LookupError:
         raise HTTPException(
@@ -234,7 +234,7 @@ async def get_interview_result(
     attempt = await get_latest_attempt(
         db=db,
         interview_id=interview_id,
-        user_id=current_user.id,
+        user_id=current_user.user_id,
     )
 
     if attempt is None:

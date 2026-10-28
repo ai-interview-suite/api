@@ -54,9 +54,9 @@ and the API works on the latest one. The API's integer `question_id` is the
 question's `position` (1-5) within its attempt. Results are rebuilt from the
 evaluation rows, so `/submit` and `/result` always return the same report.
 
-The old `interviews.questions`/`status`/score columns and the
-`interview_answers` table are no longer written and will be dropped by a later
-migration.
+Primary keys are named after their table (`user_id`, `interview_id`,
+`interview_attempt_id`, ...), so a foreign key has the same name as the key it
+points to.
 
 ## Setup
 
@@ -179,6 +179,13 @@ everything back) if any interview, answer or evaluation was not copied. Run it
 on a Neon branch first, then on production immediately before deploying the
 code that reads the new tables: answers saved by the old code in between are
 not copied.
+
+Revision `6bb6c25402bc` first copies any interview still missing from the new
+tables, then drops the old interview columns and `interview_answers`, and
+renames `users.id` / `interviews.id` to `user_id` / `interview_id`. The renamed
+columns and the code must change together, so run it on production and merge
+straight away; requests fail for the few minutes until Render's deploy is
+live.
 
 The Neon project and its connection string are managed in the
 [Neon console](https://console.neon.tech).
